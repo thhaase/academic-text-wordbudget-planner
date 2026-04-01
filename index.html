@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thesis Word Budget</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #16161D; }
+  #root { min-height: 100vh; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useCallback, useEffect } = React;
+
+const INIT_SECTIONS = [
+  { id: "intro", label: "Introduction", color: "#FF91AF", subs: [] },
+  { id: "litrev", label: "Literature Review", color: "#5B8C5A", subs: [] },
+  { id: "methods", label: "Data & Methods", color: "#2E5090", subs: [] },
+  { id: "results", label: "Results", color: "#E8D44D", subs: [
+    { id: "r1", label: "Text Analysis" }, { id: "r2", label: "Network Analysis" },
+  ]},
+  { id: "discussion", label: "Discussion", color: "#8B6CB0", subs: [] },
+  { id: "conclusion", label: "Conclusion", color: "#C5B8A1", subs: [] },
+];
+const INIT_W = [0.08, 0.22, 0.2, 0.25, 0.18, 0.07];
+const WPP = 525;
+const PRESETS = {
+  equal:{ label:"Equal", w:[1/6,1/6,1/6,1/6,1/6,1/6] },
+  litH:{ label:"Lit-Heavy", w:[0.08,0.28,0.18,0.22,0.16,0.08] },
+  resH:{ label:"Results-Heavy", w:[0.07,0.18,0.2,0.3,0.18,0.07] },
+  bal:{ label:"Balanced", w:[0.08,0.22,0.2,0.25,0.18,0.07] },
+};
+
+let _c = 100;
+const uid = () => `s${_c++}`;
+const eqW = n => Array(n).fill(1/n);
+
+function App() {
+  const [total, setTotal] = useState(11000);
+  const [weights, setWeights] = useState(INIT_W);
+  const [sections, setSections] = useState(INIT_SECTIONS);
+  const [subW, setSubW] = useState({ results: [0.5, 0.5] });
+  const [drag, setDrag] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const barRef = useRef(null);
+  const subBarRefs = useRef({});
+  const [jsonOpen, setJsonOpen] = useState(false);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonErr, setJsonErr] = useState(null);
+
+  const cum = weights.reduce((a,w,i)=>{a.push((a[i]||0)+w);return a;},[0]);
+  const getSW = (id,len) => { const s=subW[id]; return s&&s.length===len?s:eqW(len); };
+
+  const onDown = useCallback((type,si,di,e) => {
+    e.preventDefault(); e.stopPropagation();
+    setDrag({type,si,di});
+  },[]);
+
+  const onMove = useCallback(e => {
+    if(!drag) return;
+    const mn=0.03;
+    if(drag.type==="main"){
+      if(!barRef.current) return;
+      const r=barRef.current.getBoundingClientRect();
+      const ratio=Math.max(0,Math.min(e.clientY-r.top,r.height))/r.height;
+      const idx=drag.di;
+      setWeights(p=>{
+        const c=p.reduce((a,w,i)=>{a.push((a[i]||0)+w);return a;},[0]);
+        const n=[...p], lo=idx===0?0:c[idx], hi=c[idx+2];
+        const v=Math.max(lo+mn,Math.min(ratio,hi-mn));
+        n[idx]=v-lo; n[idx+1]=hi-v; return n;
+      });
+    } else {
+      const secId=sections[drag.si].id;
+      const ref=subBarRefs.current[secId];
+      if(!ref) return;
+      const r=ref.getBoundingClientRect();
+      const ratio=Math.max(0,Math.min(e.clientX-r.left,r.width))/r.width;
+      const idx=drag.di;
+      setSubW(p=>{
+        const sw=p[secId]||[];
+        const c=sw.reduce((a,w,i)=>{a.push((a[i]||0)+w);return a;},[0]);
+        const n=[...sw], lo=idx===0?0:c[idx], hi=c[idx+2];
+        const v=Math.max(lo+mn,Math.min(ratio,hi-mn));
+        n[idx]=v-lo; n[idx+1]=hi-v; return{...p,[secId]:n};
+      });
+    }
+  },[drag,sections]);
+
+  const onUp = useCallback(()=>setDrag(null),[]);
+  useEffect(()=>{
+    if(drag){
+      window.addEventListener("pointermove",onMove);
+      window.addEventListener("pointerup",onUp);
+      return()=>{window.removeEventListener("pointermove",onMove);window.removeEventListener("pointerup",onUp);};
+    }
+  },[drag,onMove,onUp]);
+
+  const addSub = i => {
+    const s=sections[i]; const ns={id:uid(),label:"New subsection"};
+    const up=[...sections]; up[i]={...s,subs:[...s.subs,ns]};
+    setSections(up);
+    setSubW(p=>({...p,[s.id]:eqW(up[i].subs.length)}));
+    setEditing(ns.id);
+  };
+  const rmSub = (i,si) => {
+    const s=sections[i]; const up=[...sections];
+    const ns=s.subs.filter((_,j)=>j!==si); up[i]={...s,subs:ns};
+    setSections(up);
+    if(!ns.length) setSubW(p=>{const n={...p};delete n[s.id];return n;});
+    else setSubW(p=>({...p,[s.id]:eqW(ns.length)}));
+  };
+  const renameSub = (i,si,name) => {
+    const up=[...sections]; const ns=[...up[i].subs];
+    ns[si]={...ns[si],label:name}; up[i]={...up[i],subs:ns}; setSections(up);
+  };
+  const swapSub = (i,si,dir) => {
+    const s=sections[i]; const ti=si+dir;
+    if(ti<0||ti>=s.subs.length) return;
+    const up=[...sections]; const ns=[...s.subs];
+    [ns[si],ns[ti]]=[ns[ti],ns[si]];
+    up[i]={...s,subs:ns}; setSections(up);
+    setSubW(p=>{
+      const sw=p[s.id]; if(!sw||sw.length!==ns.length) return p;
+      const nw=[...sw]; [nw[si],nw[ti]]=[nw[ti],nw[si]];
+      return{...p,[s.id]:nw};
+    });
+  };
+
+  const toJson = () => {
+    const data = { total, sections: sections.map((s,i)=>({
+      id:s.id, label:s.label, color:s.color, weight: Math.round(weights[i]*10000)/10000,
+      subs: s.subs.map((sub,si)=>({
+        id:sub.id, label:sub.label, weight: Math.round(getSW(s.id,s.subs.length)[si]*10000)/10000,
+      })),
+    }))};
+    return JSON.stringify(data, null, 2);
+  };
+
+  const openJson = () => { setJsonText(toJson()); setJsonErr(null); setJsonOpen(v=>!v); };
+
+  const applyJson = (text) => {
+    try {
+      const data = JSON.parse(text);
+      if(data.total) setTotal(data.total);
+      if(data.sections && Array.isArray(data.sections)){
+        const secs = data.sections.map(s=>({
+          id:s.id, label:s.label, color:s.color,
+          subs: (s.subs||[]).map(sub=>({id:sub.id,label:sub.label})),
+        }));
+        const ws = data.sections.map(s=>s.weight);
+        const sw = {};
+        data.sections.forEach(s=>{
+          if(s.subs&&s.subs.length>0) sw[s.id]=s.subs.map(sub=>sub.weight);
+        });
+        setSections(secs); setWeights(ws); setSubW(sw);
+        setJsonErr(null);
+      }
+    } catch(err){ setJsonErr(err.message); }
+  };
+
+  useEffect(()=>{ if(jsonOpen) setJsonText(toJson()); }, [total, weights, sections, subW, jsonOpen]);
+
+  const wc = weights.map(w=>Math.round(w*total));
+  wc[wc.length-1] += total - wc.reduce((a,b)=>a+b,0);
+
+  const S = {
+    muted: { opacity:0.4 },
+    tabnum: { fontVariantNumeric:"tabular-nums" },
+    btn: {
+      background:"transparent", border:"1px solid rgba(197,184,161,0.18)",
+      color:"#C5B8A1", padding:"0.3rem 0.6rem", fontSize:"0.62rem",
+      textTransform:"uppercase", letterSpacing:"0.06em", cursor:"pointer", borderRadius:2,
+    },
+  };
+
+  return (
+    <div style={{
+      minHeight:"100vh", background:"#16161D", color:"#C5B8A1",
+      fontFamily:"'IBM Plex Mono','Fira Code',monospace", padding:"1.5rem",
+      userSelect:drag?"none":"auto",
+    }}>
+      <div style={{ maxWidth:1000, margin:"0 auto" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:"0.5rem", marginBottom:"1.2rem" }}>
+          <div>
+            <h1 style={{ fontSize:"1rem", fontWeight:400, letterSpacing:"0.15em", textTransform:"uppercase", margin:0 }}>
+              Thesis Word Budget
+            </h1>
+            <p style={{ fontSize:"0.65rem", opacity:0.4, margin:"0.15rem 0 0" }}>
+              Drag bar dividers · + subsections · Click names to rename · ▲▼ reorder
+            </p>
+          </div>
+          <div style={{ display:"flex", gap:"0.4rem", alignItems:"center" }}>
+            <button onClick={openJson} style={{...S.btn, opacity: jsonOpen ? 1 : 0.7}}
+              onMouseEnter={e=>{e.target.style.background="rgba(197,184,161,0.08)";}}
+              onMouseLeave={e=>{e.target.style.background="transparent";}}>
+              {jsonOpen ? "✕ Close" : "{ } JSON"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:"0.8rem", flexWrap:"wrap", marginBottom:"0.8rem" }}>
+          <label style={{ fontSize:"0.65rem", textTransform:"uppercase", letterSpacing:"0.1em", opacity:0.5 }}>Total</label>
+          <input type="range" min={8000} max={14000} step={500} value={total}
+            onChange={e=>setTotal(+e.target.value)} style={{ width:140, accentColor:"#C5B8A1" }} />
+          <span style={{ ...S.tabnum, fontSize:"1rem", fontWeight:600 }}>{total.toLocaleString()}</span>
+          <span style={{ fontSize:"0.6rem", opacity:0.3 }}>≈ {(total/WPP).toFixed(0)} pages</span>
+          <div style={{ flex:1 }}/>
+          {Object.entries(PRESETS).map(([k,p])=>(
+            <button key={k} onClick={()=>setWeights([...p.w])} style={{...S.btn, padding:"0.25rem 0.5rem"}}
+              onMouseEnter={e=>{e.target.style.background="rgba(197,184,161,0.08)";}}
+              onMouseLeave={e=>{e.target.style.background="transparent";}}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", gap:"1.5rem", alignItems:"flex-start" }}>
+          <div style={{ position:"sticky", top:"1.5rem", flexShrink:0 }}>
+            <div ref={barRef} style={{
+              width:52, height:480, position:"relative",
+              borderRadius:4, overflow:"hidden", boxShadow:"0 0 24px rgba(0,0,0,0.35)",
+            }}>
+              {sections.map((sec,i) => {
+                const top=cum[i]*100, h=weights[i]*100;
+                return (
+                  <div key={sec.id} style={{
+                    position:"absolute", top:`${top}%`, left:0, right:0, height:`${h}%`,
+                    background:sec.color, opacity:0.85,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    transition:drag?"none":"all 0.12s ease",
+                  }}>
+                    {h>5 && <span style={{
+                      fontSize:"0.48rem", fontWeight:700, color:"#16161D",
+                      writingMode:h<10?"vertical-rl":"horizontal-tb",
+                    }}>{Math.round(weights[i]*100)}%</span>}
+                  </div>
+                );
+              })}
+              {weights.slice(0,-1).map((_,i) => {
+                const pos=cum[i+1]*100;
+                return (
+                  <div key={`d${i}`} onPointerDown={e=>onDown("main",null,i,e)}
+                    style={{
+                      position:"absolute", top:`calc(${pos}% - 9px)`, left:-6, right:-6,
+                      height:18, cursor:"ns-resize", zIndex:10,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                    }}>
+                    <div style={{ width:"140%", height:2, background:"#16161D", boxShadow:"0 0 8px rgba(0,0,0,0.9)" }}/>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ flex:1, display:"flex", flexDirection:"column", gap:"0.35rem" }}>
+            {sections.map((sec,i) => {
+              const words=wc[i];
+              const pct=(weights[i]*100).toFixed(1);
+              const hasSubs=sec.subs.length>0;
+              const sw=getSW(sec.id,sec.subs.length);
+              const swCum=sw.reduce((a,w,j)=>{a.push((a[j]||0)+w);return a;},[0]);
+
+              return (
+                <div key={sec.id} style={{
+                  background:"rgba(197,184,161,0.03)", borderRadius:4,
+                  border:"1px solid rgba(197,184,161,0.06)", padding:"0.55rem 0.7rem",
+                }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.5rem" }}>
+                    <div style={{ width:10, height:10, minWidth:10, borderRadius:2, background:sec.color, opacity:0.85 }}/>
+                    <span style={{ fontSize:"0.75rem", fontWeight:600, flex:1 }}>{sec.label}</span>
+                    <span style={{ ...S.tabnum, fontSize:"0.6rem", opacity:0.45 }}>
+                      {words.toLocaleString()} w
+                    </span>
+                    <span style={{ ...S.tabnum, fontSize:"0.6rem", opacity:0.35 }}>
+                      {(words/WPP).toFixed(1)} pp
+                    </span>
+                    <span style={{ ...S.tabnum, fontSize:"0.6rem", opacity:0.35 }}>
+                      {pct}%
+                    </span>
+                    <button onClick={()=>addSub(i)} title="Add subsection"
+                      style={{
+                        background:"transparent", border:"1px solid rgba(197,184,161,0.12)",
+                        color:"#C5B8A1", width:22, height:22, fontSize:"0.85rem",
+                        cursor:"pointer", borderRadius:2, display:"flex", alignItems:"center",
+                        justifyContent:"center", opacity:0.35, padding:0, lineHeight:1,
+                      }}
+                      onMouseEnter={e=>{e.currentTarget.style.opacity="0.8";}}
+                      onMouseLeave={e=>{e.currentTarget.style.opacity="0.35";}}>+</button>
+                  </div>
+
+                  {hasSubs && (
+                    <div style={{ marginTop:"0.45rem" }}>
+                      <div ref={el=>{subBarRefs.current[sec.id]=el;}}
+                        style={{
+                          width:"100%", height:14, borderRadius:3, overflow:"hidden",
+                          position:"relative", background:"rgba(197,184,161,0.04)",
+                        }}>
+                        {sec.subs.map((sub,si) => (
+                          <div key={sub.id} style={{
+                            position:"absolute", top:0, bottom:0,
+                            left:`${swCum[si]*100}%`, width:`${sw[si]*100}%`,
+                            background:sec.color, opacity: 0.3 + si*0.12,
+                            transition:drag?"none":"all 0.12s ease",
+                          }}/>
+                        ))}
+                        {sec.subs.length>1 && sec.subs.slice(0,-1).map((_,si) => (
+                          <div key={`sd${si}`} onPointerDown={e=>onDown("sub",i,si,e)}
+                            style={{
+                              position:"absolute", top:-2, bottom:-2,
+                              left:`calc(${swCum[si+1]*100}% - 7px)`, width:14,
+                              cursor:"ew-resize", zIndex:10,
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                            }}>
+                            <div style={{ width:2, height:"140%", background:"#16161D", boxShadow:"0 0 4px rgba(0,0,0,0.6)" }}/>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ marginTop:"0.3rem", display:"flex", flexDirection:"column", gap:"0.15rem" }}>
+                        {sec.subs.map((sub,si) => {
+                          const subWords=Math.round(sw[si]*words);
+                          const subPct=(sw[si]*weights[i]*100).toFixed(1);
+                          return (
+                            <div key={sub.id} style={{ display:"flex", alignItems:"center", gap:"0.4rem", paddingLeft:"0.25rem" }}>
+                              <div style={{ width:6, height:6, minWidth:6, borderRadius:"50%", background:sec.color, opacity:0.3+si*0.12 }}/>
+                              {editing===sub.id ? (
+                                <input autoFocus defaultValue={sub.label}
+                                  onBlur={e=>{renameSub(i,si,e.target.value||"Untitled");setEditing(null);}}
+                                  onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                                  style={{
+                                    background:"transparent", border:"none",
+                                    borderBottom:"1px solid rgba(197,184,161,0.3)",
+                                    color:"#C5B8A1", fontSize:"0.63rem", fontFamily:"inherit",
+                                    outline:"none", padding:"1px 2px", width:160,
+                                  }}/>
+                              ) : (
+                                <span onClick={()=>setEditing(sub.id)}
+                                  style={{ fontSize:"0.63rem", opacity:0.65, cursor:"text" }}
+                                  title="Click to rename">{sub.label}</span>
+                              )}
+                              <span style={{ ...S.tabnum, fontSize:"0.52rem", opacity:0.3, marginLeft:"auto", whiteSpace:"nowrap" }}>
+                                {subWords.toLocaleString()} w · {(subWords/WPP).toFixed(1)} pp · {subPct}%
+                              </span>
+                              <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+                                <button onClick={()=>swapSub(i,si,-1)} disabled={si===0}
+                                  style={{
+                                    background:"transparent", border:"none", color:"#C5B8A1",
+                                    fontSize:"0.5rem", cursor:si===0?"default":"pointer",
+                                    opacity:si===0?0.1:0.25, padding:"0 2px", lineHeight:1, height:10,
+                                  }}
+                                  onMouseEnter={e=>{if(si>0)e.currentTarget.style.opacity="0.7";}}
+                                  onMouseLeave={e=>{e.currentTarget.style.opacity=si===0?"0.1":"0.25";}}
+                                  title="Move up">▲</button>
+                                <button onClick={()=>swapSub(i,si,1)} disabled={si===sec.subs.length-1}
+                                  style={{
+                                    background:"transparent", border:"none", color:"#C5B8A1",
+                                    fontSize:"0.5rem", cursor:si===sec.subs.length-1?"default":"pointer",
+                                    opacity:si===sec.subs.length-1?0.1:0.25, padding:"0 2px", lineHeight:1, height:10,
+                                  }}
+                                  onMouseEnter={e=>{if(si<sec.subs.length-1)e.currentTarget.style.opacity="0.7";}}
+                                  onMouseLeave={e=>{e.currentTarget.style.opacity=si===sec.subs.length-1?"0.1":"0.25";}}
+                                  title="Move down">▼</button>
+                              </div>
+                              <button onClick={()=>rmSub(i,si)}
+                                style={{
+                                  background:"transparent", border:"none", color:"#C5B8A1",
+                                  fontSize:"0.65rem", cursor:"pointer", opacity:0.2, padding:"0 3px", lineHeight:1,
+                                }}
+                                onMouseEnter={e=>{e.currentTarget.style.opacity="0.6";}}
+                                onMouseLeave={e=>{e.currentTarget.style.opacity="0.2";}}
+                                title="Remove">×</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginTop:"1.2rem", borderTop:"1px solid rgba(197,184,161,0.1)", paddingTop:"0.7rem" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"0.64rem" }}>
+            <thead>
+              <tr style={{ opacity:0.4, textTransform:"uppercase", letterSpacing:"0.06em" }}>
+                <th style={{ textAlign:"left", padding:"0.3rem 0", fontWeight:400 }}>Section</th>
+                <th style={{ textAlign:"right", padding:"0.3rem 0", fontWeight:400 }}>Words</th>
+                <th style={{ textAlign:"right", padding:"0.3rem 0", fontWeight:400 }}>Pages</th>
+                <th style={{ textAlign:"right", padding:"0.3rem 0", fontWeight:400 }}>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sections.map((sec,i) => {
+                const words=wc[i]; const hasSubs=sec.subs.length>0;
+                const sw2=getSW(sec.id,sec.subs.length);
+                return (
+                  <React.Fragment key={sec.id}>
+                    <tr style={{ borderTop:"1px solid rgba(197,184,161,0.05)" }}>
+                      <td style={{ padding:"0.25rem 0", display:"flex", alignItems:"center", gap:"0.35rem" }}>
+                        <span style={{ display:"inline-block", width:6, height:6, borderRadius:1, background:sec.color, opacity:0.85 }}/>
+                        <span style={{ fontWeight:hasSubs?600:400 }}>{sec.label}</span>
+                      </td>
+                      <td style={{ textAlign:"right", padding:"0.25rem 0", ...S.tabnum, fontWeight:hasSubs?600:400 }}>{words.toLocaleString()}</td>
+                      <td style={{ textAlign:"right", padding:"0.25rem 0", ...S.tabnum }}>{(words/WPP).toFixed(1)}</td>
+                      <td style={{ textAlign:"right", padding:"0.25rem 0", ...S.tabnum }}>{(weights[i]*100).toFixed(1)}%</td>
+                    </tr>
+                    {hasSubs && sec.subs.map((sub,si) => {
+                      const subWords=Math.round(sw2[si]*words);
+                      return (
+                        <tr key={sub.id} style={{ opacity:0.5 }}>
+                          <td style={{ padding:"0.15rem 0 0.15rem 1rem", fontSize:"0.58rem" }}>└ {sub.label}</td>
+                          <td style={{ textAlign:"right", padding:"0.15rem 0", ...S.tabnum, fontSize:"0.58rem" }}>{subWords.toLocaleString()}</td>
+                          <td style={{ textAlign:"right", padding:"0.15rem 0", ...S.tabnum, fontSize:"0.58rem" }}>{(subWords/WPP).toFixed(1)}</td>
+                          <td style={{ textAlign:"right", padding:"0.15rem 0", ...S.tabnum, fontSize:"0.58rem" }}>{(sw2[si]*weights[i]*100).toFixed(1)}%</td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              })}
+              <tr style={{ borderTop:"1px solid rgba(197,184,161,0.18)", fontWeight:600 }}>
+                <td style={{ padding:"0.35rem 0" }}>Total</td>
+                <td style={{ textAlign:"right", padding:"0.35rem 0", ...S.tabnum }}>{total.toLocaleString()}</td>
+                <td style={{ textAlign:"right", padding:"0.35rem 0", ...S.tabnum }}>{(total/WPP).toFixed(1)}</td>
+                <td style={{ textAlign:"right", padding:"0.35rem 0" }}>100%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {jsonOpen && (
+          <div style={{
+            marginTop:"1rem", border:"1px solid rgba(197,184,161,0.12)",
+            borderRadius:4, overflow:"hidden",
+          }}>
+            <div style={{
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"0.4rem 0.6rem", background:"rgba(197,184,161,0.04)",
+              borderBottom:"1px solid rgba(197,184,161,0.08)",
+            }}>
+              <span style={{ fontSize:"0.62rem", textTransform:"uppercase", letterSpacing:"0.08em", opacity:0.5 }}>
+                Edit JSON · changes apply on button press
+              </span>
+              <div style={{ display:"flex", gap:"0.4rem", alignItems:"center" }}>
+                {jsonErr && (
+                  <span style={{ fontSize:"0.58rem", color:"#FF91AF", opacity:0.9 }}>
+                    ⚠ {jsonErr}
+                  </span>
+                )}
+                <button onClick={()=>{ setJsonText(toJson()); setJsonErr(null); }}
+                  style={{...S.btn, padding:"0.2rem 0.5rem", fontSize:"0.58rem"}}
+                  onMouseEnter={e=>{e.target.style.background="rgba(197,184,161,0.08)";}}
+                  onMouseLeave={e=>{e.target.style.background="transparent";}}>
+                  Reset
+                </button>
+                <button onClick={()=>applyJson(jsonText)}
+                  style={{
+                    ...S.btn, padding:"0.2rem 0.5rem", fontSize:"0.58rem",
+                    borderColor:"rgba(197,184,161,0.35)", fontWeight:600,
+                  }}
+                  onMouseEnter={e=>{e.target.style.background="rgba(197,184,161,0.12)";}}
+                  onMouseLeave={e=>{e.target.style.background="transparent";}}>
+                  Apply
+                </button>
+                <button onClick={()=>{navigator.clipboard?.writeText(jsonText);}}
+                  style={{...S.btn, padding:"0.2rem 0.5rem", fontSize:"0.58rem"}}
+                  onMouseEnter={e=>{e.target.style.background="rgba(197,184,161,0.08)";}}
+                  onMouseLeave={e=>{e.target.style.background="transparent";}}>
+                  Copy
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={jsonText}
+              onChange={e=>{ setJsonText(e.target.value); setJsonErr(null); }}
+              spellCheck={false}
+              style={{
+                width:"100%", minHeight:280, maxHeight:500, resize:"vertical",
+                background:"#0e0e14", color:"#C5B8A1", border:"none",
+                fontFamily:"'IBM Plex Mono','Fira Code',monospace",
+                fontSize:"0.62rem", lineHeight:1.5, padding:"0.6rem",
+                outline:"none", boxSizing:"border-box",
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
